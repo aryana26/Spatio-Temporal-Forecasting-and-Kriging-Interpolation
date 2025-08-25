@@ -56,7 +56,8 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 -  Variogram modeling & universal kriging with external drift.  
 -  Pollution animation GIF generated.  
 -  Integration with XGBoost models.  
--  Implementation of IGNNK and graph-based spatiotemporal forecasting models.  
+-  Implementation of IGNNK and graph-based spatiotemporal interpolation models.
+-  Forecasting Models with ST-LLM and SARIMA and other paproaches in progress
 
 ---
 
