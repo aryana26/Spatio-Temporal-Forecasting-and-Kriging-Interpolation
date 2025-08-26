@@ -65,7 +65,7 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 ```
 Spatio-Temporal-Forecasting-and-Kriging-Interpolation/
 │── bihar_pollution2.gif # Animation of pollution spread over Bihar
-│── graph_sage_gnn.ipynb # Graph Neural Network (GraphSAGE) approach
+│── graph_sage_gnn.ipynb # Graph Neural Network (GraphSAGE) approach and XGBOost Approach also towards the end
 │── kriging_methods_plots.ipynb # Kriging-based interpolation methods
 │── trial1/ # Folder containing static Bihar pollution maps
 │── XGB_based_model_plots_and_hotspot_detection.ipynb # XGBoost predictions & hotspot detection
