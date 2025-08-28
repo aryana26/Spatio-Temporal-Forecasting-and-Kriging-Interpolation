@@ -37,9 +37,9 @@ In the notebooks, this can be interacted with as a **live object** for exploring
 
 ### 2. Pollution Animation (GIF)
 We generate animated spatial maps showing **predicted PM2.5 concentrations across Bihar** on a **500m × 500m grid**.  
-This GIF illustrates **pollution dynamics and spatial gradients** predicted using Kriging-based interpolation:  
+This GIF illustrates **pollution dynamics and spatial gradients** predicted using XGBoost Regressor based and Nearest Neighbours logic interpolation on Forecasted values at stations using GRU based forecaster:  
 
-![Predicted PM2.5 Animation](bihar_pollution2.gif)
+![Predicted PM2.5 Animation](bihar_pollution_forecasted.gif)
 
 ---
 
