@@ -31,6 +31,7 @@ Air quality monitoring networks in India have limited spatial coverage. To bette
 Below is an example plot of the **sensor locations and generated grid points** used for interpolation.  
 In the notebooks, this can be interacted with as a **live object** for exploring specific sensor points and their neighborhoods.  
 
+![Sensor Grid Layout](graph_net.png)
 ![Sensor Grid Layout](sensor_grid.png)
 
 ---
