@@ -3,6 +3,7 @@
 This repository contains work from the **Centre of Excellence ATMAN, National Aerosol Facility, IIT Kanpur**, focused on predicting **PM2.5 concentrations at unknown locations** using a range of statistical, machine learning, and graph-based methods.  
 
 Currently, the repository includes code for **spatial interpolation and Kriging methods**. Upcoming modules will integrate advanced forecasting approaches including **XGBoost, IGNNK, and graph neural network–based models**.
+We are also integrating advanced spatiotemporal forecasting approaches leveraging Large Language Models (LLMs) with PEFT/LoRA and Graph Neural Networks (GNNs) for next-hour and multi-hour PM2.5 predictions.
 
 ---
 
@@ -20,8 +21,11 @@ Air quality monitoring networks in India have limited spatial coverage. To bette
   - **Graph-based methods** including **IGNNK** (Inductive Graph Neural Network for Kriging) that exploit the sensor network as a graph for more robust spatial interpolation.  
 
 - **Spatiotemporal Forecasting**
--  Exploring Foundational Models like ST-LLM- (work ongoing, hence not added in repo yet)
-  - We will be leveraging **u10 (east–west wind)** and **v10 (north–south wind)** components from ERA5 reanalysis data to capture pollutant transport and dispersion effects.  
+-  Exploring Foundational Models like ST-LLM- (work ongoing)
+-  Using ST-LLM (Spatiotemporal Large Language Model- distilGPT2 for memory contarined enviroment) with PEFT (LoRA) fine-tuning to predict PM2.5 sequences.
+- Integrates graph-based sensor embeddings via GNNs to capture spatial correlations dynamically.
+- Recursive multi-hour forecasting implemented, allowing predictions beyond the last observed timestamp.
+- Incorporates meteorological cyclic features (hourly, monthly) and sensor metadata (latitude, longitude).
 
 ---
 
@@ -64,12 +68,17 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 
 ## 📂 Repository Structure
 ```
-Spatio-Temporal-Forecasting-and-Kriging-Interpolation/
-│── bihar_pollution2.gif # Animation of pollution spread over Bihar
-│── graph_sage_gnn.ipynb # Graph Neural Network (GraphSAGE) approach and XGBOost Approach also towards the end
-│── kriging_methods_plots.ipynb # Kriging-based interpolation methods
-│── trial1/ # Folder containing static Bihar pollution maps
-│── XGB_based_model_plots_and_hotspot_detection.ipynb # XGBoost predictions & hotspot detection
+│── forecasting/
+│   │── inference.py          # Sliding-window & extended recursive forecasts
+│   │── training_script.py    # ST-LLM + GNN model training
+│   │── stllm.py              # ST-LLMWithGNN model definition
+│   │── models/               # Saved checkpoints, scalers, graph data
+│── Spatio-Temporal-Forecasting-and-Kriging-Interpolation/
+│   │── bihar_pollution2.gif # Animation of pollution spread over Bihar
+│   │── graph_sage_gnn.ipynb # Graph Neural Network (GraphSAGE) approach and XGBOost Approach also towards the end
+│   │── kriging_methods_plots.ipynb # Kriging-based interpolation methods
+│   │── trial1/ # Folder containing static Bihar pollution maps
+│   │── XGB_based_model_plots_and_hotspot_detection.ipynb # XGBoost predictions & hotspot detection
 ---
 ```
 
