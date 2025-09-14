@@ -62,23 +62,29 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 -  Pollution animation GIF generated.  
 -  Integration with XGBoost models.  
 -  Implementation of IGNNK and graph-based spatiotemporal interpolation models.
--  Forecasting Models with ST-LLM and SARIMA and other paproaches in progress
+-  Forecasting Models with ST-LLM, PEFT on GPT2, GNNs and SARIMA and other paproaches in progress
 
 ---
 
 ## 📂 Repository Structure
 ```
-│── forecasting/
+│── ST-LLM+GNN+GPT2 finetune-forecasting/
 │   │── inference.py          # Sliding-window & extended recursive forecasts
 │   │── training_script.py    # ST-LLM + GNN model training
 │   │── stllm.py              # ST-LLMWithGNN model definition
 │   │── models/               # Saved checkpoints, scalers, graph data
-│── Spatio-Temporal-Forecasting-and-Kriging-Interpolation/
+│── Spatio-Temporal-Kriging-Interpolation/
 │   │── bihar_pollution2.gif # Animation of pollution spread over Bihar
 │   │── graph_sage_gnn.ipynb # Graph Neural Network (GraphSAGE) approach and XGBOost Approach also towards the end
 │   │── kriging_methods_plots.ipynb # Kriging-based interpolation methods
 │   │── trial1/ # Folder containing static Bihar pollution maps
 │   │── XGB_based_model_plots_and_hotspot_detection.ipynb # XGBoost predictions & hotspot detection
+│── ST-LLM + PEFT- Forecasting/
+│   │── inference.py          # Sliding-window & extended recursive forecasts
+│   │── training_stllm_custom.py    # ST-LLM + PEFT model training
+│   │── models/               # Saved checkpoints, scalers, graph data
+│   │   │── st_llm_model.py              # ST-LLMWithGNN model definition
+
 ---
 ```
 
