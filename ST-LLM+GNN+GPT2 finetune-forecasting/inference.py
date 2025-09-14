@@ -9,19 +9,12 @@ import numpy as np
 def root_mean_squared_error(y_true, y_pred):
     return np.sqrt(mean_squared_error(y_true, y_pred))
 import matplotlib.pyplot as plt
-# import your model class from the same file where you defined it
-# from stllm_distilgpt2_peft import STLLMWithGNN, SpatioTemporalDataset, cyclic_encode_...  # if needed
-# If the classes are in the same file, just run this script from that directory so it can import.
+
 from stllm import STLLMWithGNN  # keep names exactly the same
-# Note: We do not use SpatioTemporalDataset inside the inference loop to avoid refitting scalers.
-# We'll create windows manually using saved scaler info.
 
 from transformers import GPT2Model, GPT2Config, AutoModel
 from peft import get_peft_model, LoraConfig, TaskType
 
-# ---------------------------
-# helper: inverse transform using saved mean/scale dict
-# ---------------------------
 def inverse_transform_pm25_from_scalerinfo(scaler_info, data_np, num_features):
     """
     scaler_info: {'mean': array_like (F,), 'scale': array_like (F,)}
@@ -38,9 +31,7 @@ def inverse_transform_pm25_from_scalerinfo(scaler_info, data_np, num_features):
     unscaled = dummy * scale + mean
     return unscaled[:, 0]
 
-# ---------------------------
-# inference function (windowed sliding sequences)
-# ---------------------------
+
 def run_inference_with_saved_scalers(
     df,
     model,
@@ -54,20 +45,16 @@ def run_inference_with_saved_scalers(
     batch_size_seq=1
 ):
     """
-    Produces predictions for every valid sliding input window:
       sequence windows start at i=0 .. max_seq-1 where max_seq = T - sequence_length - forecast_horizon + 1
-    Args:
-      df: DataFrame with columns at least ['sensor_id','timestamp','pm25','temp','rh','latitude','longitude']
-      model: STLLMWithGNN instance with transformer already attached and state_dict loaded
-      scaler_info_dict: {sensor_id: {'mean': <F-array>, 'scale': <F-array>}, ...}
-      edge_index, edge_attr: loaded tensors (on device)
-      feature_cols: list of feature names in order used during training (default below)
-      sequence_length: L
-      forecast_horizon: H (must match training horizon typically)
-      batch_size_seq: how many sliding windows to forward at once (keeps memory small; default 1)
-    Returns:
-      df_pred: DataFrame with columns ['sensor_id','timestamp','pm25_pred','pm25_true']
-      metrics: dict with MAE, RMSE, MAPE, MSE computed over all predictions
+    needs:
+      df: df with cols['sensor_id','timestamp','pm25','temp','rh','latitude','longitude']
+      model: STLLMWithGNN instance
+      scaler_info_dict
+      edge_index, edge_attr
+      feature_cols
+      sequence_length
+      forecast_horizon
+      batch_size_seq
     """
     model.eval()
     model.to(device)
@@ -81,17 +68,14 @@ def run_inference_with_saved_scalers(
         ]
     F = len(feature_cols)
 
-    # Build per-sensor arrays (sorted by sensor_id)
     sensor_ids = sorted(df['sensor_id'].unique())
     sensor_to_index = {sid: i for i,sid in enumerate(sensor_ids)}
     S = len(sensor_ids)
 
-    # build per-sensor raw arrays and timestamps
     per_sensor_vals = {}
     per_sensor_timestamps = {}
-    per_sensor_features = {}  # raw features (unscaled) -> so we can scale using saved mean/scale
+    per_sensor_features = {} 
 
-    # Add cyclic features to df if missing
     if 'hour_sin' not in df.columns:
         df = df.copy()
         df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -107,110 +91,85 @@ def run_inference_with_saved_scalers(
     for sid in sensor_ids:
         sub = df[df['sensor_id']==sid].sort_values('timestamp').reset_index(drop=True)
         per_sensor_timestamps[sid] = sub['timestamp'].values
-        # ensure feature columns exist
         arr = sub[feature_cols].values.astype(np.float32)  # shape (T_s, F)
         per_sensor_features[sid] = arr
         per_sensor_vals[sid] = sub['pm25'].values.astype(np.float32)
 
-    # compute max sequences (we only loop until all sensors can provide full windows)
     min_T = min(arr.shape[0] for arr in per_sensor_features.values())
     max_sequences = min_T - sequence_length - forecast_horizon + 1
     if max_sequences < 1:
         raise ValueError("Not enough timepoints per sensor for sequence_length + forecast_horizon")
 
-    results = []  # will collect (sid, timestamp, pred, true)
+    results = []  
 
-    # We'll process sliding windows in small batches of windows for thriftiness
+    # sliding windows 
     for seq_start in tqdm(range(0, max_sequences, batch_size_seq), desc="Inference windows"):
         seq_batch = list(range(seq_start, min(seq_start + batch_size_seq, max_sequences)))
         batch_size_actual = len(seq_batch)
 
-        # Build batch X of shape (B, S, L, F)
-        # B = batch_size_actual
         B = batch_size_actual
         Xbat = np.zeros((B, S, sequence_length, F), dtype=np.float32)
-        Ybat_true = np.zeros((B, S, forecast_horizon), dtype=np.float32)  # ground truth pm25 (raw)
-        tsbat = [[None]*S for _ in range(B)]  # to store forecast timestamps for each sensor
+        Ybat_true = np.zeros((B, S, forecast_horizon), dtype=np.float32)  
+        tsbat = [[None]*S for _ in range(B)]  
 
         for b_idx, start_idx in enumerate(seq_batch):
             for s_idx, sid in enumerate(sensor_ids):
                 arr = per_sensor_features[sid]  # raw features (T_s, F)
-                # Scale using saved scaler info for this sensor
                 if sid not in scaler_info_dict:
                     raise KeyError(f"Scaler info for sensor {sid} not found in saved scalers")
                 scaler_info = scaler_info_dict[sid]
                 mean = np.asarray(scaler_info['mean'], dtype=np.float32)
                 scale = np.asarray(scaler_info['scale'], dtype=np.float32)
                 window_raw = arr[start_idx:start_idx+sequence_length]  # (L, F)
-                # scale: (val - mean)/scale  -> but your training used StandardScaler.fit_transform which is (x - mean)/scale
                 scaled = (window_raw - mean[None, :]) / (scale[None, :] + 1e-12)
                 Xbat[b_idx, s_idx] = scaled
 
-                # true raw pm25
+
                 pm25_vals = per_sensor_vals[sid]
                 true_window = pm25_vals[start_idx+sequence_length : start_idx+sequence_length+forecast_horizon]
                 if len(true_window) != forecast_horizon:
-                    # this shouldn't happen but guard
                     true_window = np.pad(true_window, (0, max(0, forecast_horizon - len(true_window))), 'constant', constant_values=np.nan)
                 Ybat_true[b_idx, s_idx] = true_window
 
-                # forecast timestamps for mapping
+
                 ts_window = per_sensor_timestamps[sid][start_idx+sequence_length : start_idx+sequence_length+forecast_horizon]
                 tsbat[b_idx][s_idx] = ts_window
 
-        # convert Xbat to torch and run model
-        X_t = torch.from_numpy(Xbat).to(device)  # shape (B, S, L, F)
+
+        X_t = torch.from_numpy(Xbat).to(device) 
         with torch.no_grad():
             out_t = model(X_t, edge_index.to(device), edge_attr.to(device) if edge_attr is not None else None)  # (B, S, H)
         out_np = out_t.cpu().numpy()
 
-        # unscale predictions per sensor & append to results
+
         for b_idx, start_idx in enumerate(seq_batch):
             for s_idx, sid in enumerate(sensor_ids):
-                pred_scaled = out_np[b_idx, s_idx, :]  # (H,)
-                # inverse transform pm25 scaled -> raw
+                pred_scaled = out_np[b_idx, s_idx, :]  
+
                 pred_raw = inverse_transform_pm25_from_scalerinfo(scaler_info_dict[sid], pred_scaled, F)
-                true_raw = Ybat_true[b_idx, s_idx, :]  # already raw
+                true_raw = Ybat_true[b_idx, s_idx, :]  
                 ts_seq = tsbat[b_idx][s_idx]
                 for h in range(forecast_horizon):
                     results.append({
                         'sensor_id': sid,
                         'timestamp': pd.to_datetime(ts_seq[h]),
                         'pm25_pred': float(pred_raw[h]),
-                        'pm25_true': float(true_raw[h])  # may be nan if missing
+                        'pm25_true': float(true_raw[h])  
                     })
 
-        # free tensors
+        # too much load on a30, need to free up
         del X_t, out_t
         torch.cuda.empty_cache()
 
-    # create df
+
     df_pred = pd.DataFrame(results)
-
-    # # compute global metrics on non-nan true values
-    # mask = ~df_pred['pm25_true'].isna()
-    # if mask.sum() > 0:
-    #     y_true = df_pred.loc[mask, 'pm25_true'].values
-    #     y_pred = df_pred.loc[mask, 'pm25_pred'].values
-    #     mae = mean_absolute_error(y_true, y_pred)
-    #     rmse = mean_squared_error(y_true, y_pred, squared=False)
-    #     mse = mean_squared_error(y_true, y_pred, squared=True)
-    #     mape = np.mean(np.abs((y_true - y_pred) / (y_true + 1e-6))) * 100.0
-    # else:
-    #     mae = rmse = mse = mape = float('nan')
-
-    # metrics = {'MAE': float(mae), 'RMSE': float(rmse), 'MSE': float(mse), 'MAPE': float(mape)}
     return df_pred
 
-# ---------------------------
-# full driver to load everything and call inference
-# ---------------------------
 def driver(
     df,
     ckpt_path = "models/stllm_best.pth",
     edge_index_path = "models/edge_index.pt",
     edge_attr_path = "models/edge_attr.pt",
-    # df_path = "new_data.csv",   # path to csv/pickle with the data you want to run inference on
     
     sequence_length = None,
     forecast_horizon = None,
@@ -223,16 +182,16 @@ def driver(
         device = torch.device(device)
     print('Using device:',device)
 
-    # load checkpoint
+
     ckpt = torch.load(ckpt_path, map_location='cpu')
     model_config=ckpt['config']
     sequence_length=model_config["sequence_length"]
     forecast_horizon=model_config["forecast_horizon"]
 
-    # extract scalers info
+
     if 'scalers' not in ckpt:
-        raise KeyError("Checkpoint does not include 'scalers'. You saved scalers at training as dict? check ckpt.")
-    scaler_info_dict = ckpt['scalers']  # {sid: {'mean':..., 'scale':...}}
+        raise KeyError("Checkpoint does not include 'scalers'. you messed up dawg ")
+    scaler_info_dict = ckpt['scalers']
 
     # number of sensors -> use scaler keys
     sensor_ids = sorted([int(k) for k in scaler_info_dict.keys()]) if isinstance(list(scaler_info_dict.keys())[0], (str,)) else sorted(scaler_info_dict.keys())
@@ -259,16 +218,13 @@ def driver(
         print("PEFT/LoRA wrapper applied to transformer.")
     except Exception as e:
         print("Warning: PEFT wrapping failed or not installed:", e)
-        # proceed with plain gpt2 (may still work if checkpoint contains plain weights)
 
     # derive d_model from transformer config
     d_model = getattr(gpt2.config, "hidden_size", None)
     if d_model is None:
         raise RuntimeError("Could not determine transformer hidden size (d_model).")
 
-    # instantiate STLLMWithGNN with same hyperparams used in training
-    # IMPORTANT: If you used different gnn_hidden_dim / gnn_heads / gnn_layers / input_dim in training,
-    # change them here to match training exactly. Here I'm using the defaults you used earlier.
+
     input_dim = model_config["node_feature_dim"]
     gnn_hidden_dim = model_config["gnn_hidden_dim"]
     gnn_heads = model_config["gnn_heads"]
@@ -285,32 +241,24 @@ def driver(
         use_checkpoint=False
     )
 
-    # set transformer on the model BEFORE loading state_dict
     model.set_transformer(gpt2)
 
-    # load saved model_state_dict (strict=False to allow small name differences from PEFT)
+
     model.load_state_dict(ckpt['model_state_dict'], strict=False)
     print("Model state_dict loaded (strict=False).")
 
-    # move model/transformer to device
+
     model.to(device)
     try:
         model.transformer.to(device)
     except Exception:
         pass
 
-    # load graph
+
     edge_index = torch.load(edge_index_path).to(device)
     edge_attr = torch.load(edge_attr_path).to(device) if edge_attr_path is not None else None
 
-    # load input dataframe
-    # support csv or pickle
-    # if df_path.endswith(".csv"):
-    #     df = pd.read_csv(df_path, parse_dates=['timestamp'])
-    # else:
-    #     df = pd.read_pickle(df_path) if df_path.endswith('.pkl') or df_path.endswith('.pickle') else pd.read_csv(df_path, parse_dates=['timestamp'])
-    # df=pd.read_parquet(df_path)
-    # run inference
+
     df_pred = run_inference_with_saved_scalers(
         df=df,
         model=model,
@@ -324,13 +272,9 @@ def driver(
         batch_size_seq=1
     )
 
-    # print("Inference done. Metrics:", metrics)
-    # save results
-    # df_pred.to_csv("inference_predictions.csv", index=False)
-    # print("Saved inference_predictions.csv")
     return df_pred
 
-# # If running as script:
+
 if __name__ == "__main__":
     df_new = pd.read_pickle('bihar_meteo_era5_may_jan_iterative_imputed.pkl')  # new data to forecast
     df_new=df_new[(df_new['timestamp'].dt.year==2023)&(df_new['timestamp'].dt.month.isin([7]))].reset_index(drop=True)
@@ -364,9 +308,7 @@ if __name__ == "__main__":
     df_pred.to_parquet('models/df_pred_forecasted_stllm.parquet')
     df_pred['timestamp']=pd.to_datetime(df_pred['timestamp'])
 
-    # -----------------------------
-    # recursive forecasting beyond last available timestamp
-    # -----------------------------
+
     future_steps = 24  # next 24 hours
     sensor_ids = sorted(df['sensor_id'].unique())
     per_sensor_features = {sid: df[df['sensor_id']==sid].sort_values('timestamp')[model_config["feature_cols"]].values.astype(np.float32) 
@@ -374,7 +316,7 @@ if __name__ == "__main__":
     per_sensor_timestamps = {sid: df[df['sensor_id']==sid].sort_values('timestamp')['timestamp'].values 
                              for sid in sensor_ids}
     
-    # last window per sensor
+
     last_windows = {sid: per_sensor_features[sid][-sequence_length:].copy() for sid in sensor_ids}
     last_timestamps = {sid: per_sensor_timestamps[sid][-1] for sid in sensor_ids}
 
