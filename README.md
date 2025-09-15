@@ -86,6 +86,8 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 │   │── training_stllm_custom.py    # ST-LLM with GPT2 model fine tuning and training
 │   │── models/               # Saved checkpoints, scalers, graph data
 │   │   │── st_llm_model.py              # ST-LLMWithGNN model definition
+│── Conditional GAN-Data Imputation/
+│   │── cgan_data_impute.py          # training of conditonal GAN on the data and producding imputer data
 
 ---
 ```
