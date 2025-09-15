@@ -68,7 +68,7 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 
 ## 📂 Repository Structure
 ```
-│── ST-LLM+GNN+GPT2 finetune-forecasting/
+│── ST-LLM+GNN+PEFT -Forecasting/
 │   │── inference.py          # Sliding-window & extended recursive forecasts
 │   │── training_script.py    # ST-LLM + GNN model training
 │   │── stllm.py              # ST-LLMWithGNN model definition
@@ -79,9 +79,9 @@ The following figure shows how the models learn **temporal cycles** of PM2.5 —
 │   │── kriging_methods_plots.ipynb # Kriging-based interpolation methods
 │   │── trial1/ # Folder containing static Bihar pollution maps
 │   │── XGB_based_model_plots_and_hotspot_detection.ipynb # XGBoost predictions & hotspot detection
-│── ST-LLM + PEFT- Forecasting/
+│── ST-LLM + GPT2 Finetuning- Forecasting/
 │   │── inference.py          # Sliding-window & extended recursive forecasts
-│   │── training_stllm_custom.py    # ST-LLM + PEFT model training
+│   │── training_stllm_custom.py    # ST-LLM with GPT2 model fine tuning and training
 │   │── models/               # Saved checkpoints, scalers, graph data
 │   │   │── st_llm_model.py              # ST-LLMWithGNN model definition
 
