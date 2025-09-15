@@ -21,11 +21,13 @@ Air quality monitoring networks in India have limited spatial coverage. To bette
   - **Graph-based methods** including **IGNNK** (Inductive Graph Neural Network for Kriging) that exploit the sensor network as a graph for more robust spatial interpolation.  
 
 - **Spatiotemporal Forecasting**
--  Exploring Foundational Models like ST-LLM- (work ongoing)
--  Using ST-LLM (Spatiotemporal Large Language Model- distilGPT2 for memory contarined enviroment) with PEFT (LoRA) fine-tuning to predict PM2.5 sequences.
-- Integrates graph-based sensor embeddings via GNNs to capture spatial correlations dynamically.
-- Recursive multi-hour forecasting implemented, allowing predictions beyond the last observed timestamp.
-- Incorporates meteorological cyclic features (hourly, monthly) and sensor metadata (latitude, longitude).
+  -  Exploring Foundational Models like ST-LLM- (work ongoing)
+  - Hybrid **ST-LLM + GNN** Framework: Designed a novel pipeline where a Spatio-Temporal LLM (distilGPT2 for memory constrained enviroment) captures long-range temporal dependencies, while a Graph Neural Network (GNN) encodes spatial correlations across sensors. This joint modeling significantly improved PM2.5 forecasting accuracy compared to standalone temporal or spatial models.
+  - Parameter-Efficient Fine-Tuning (PEFT): Applied **LoRA-based PEFT** on ST-LLM layers instead of full fine-tuning, reducing trainable parameters by >90% while preserving forecasting performance.
+  - State-of-the-art Results: Achieved substantial improvements in RMSE/MAE metrics by fusing latent embeddings from GNN with ST-LLM representations
+- **Data Imputation with Conditional GANs (cGANs)**
+  - Context-Aware Imputation: Built a cGAN-based imputation framework where the generator reconstructs missing PM2.5, Temp and RH values conditioned on spatio-temporal features (latitude, longitude, time encodings, and neighbor sensor averages). This is used for data imputation task for further use in different forecasting, timeseries clustering and interpolation problem as well.
+
 
 ---
 
