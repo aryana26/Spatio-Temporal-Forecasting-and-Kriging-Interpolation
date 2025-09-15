@@ -8,17 +8,25 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+# =========================
+# Step 1. Preprocessing
+# =========================
 def preprocess_dataframe(df):
+    # Assign sensor_id
     unique_sensors = df[["latitude","longitude"]].drop_duplicates().reset_index(drop=True)
     unique_sensors["sensor_id"] = range(len(unique_sensors))
     df = df.merge(unique_sensors, on=["latitude","longitude"], how="left")
     
+    
+    # BallTree for neighbors
     coords = np.radians(unique_sensors[["latitude","longitude"]].values)
     tree = BallTree(coords, metric="haversine")
-
-    dists, idxs = tree.query(coords, k=4)
-    neighbor_idxs = idxs[:, 1:4]  
     
+    # Get nearest 3 neighbors (exclude self)
+    dists, idxs = tree.query(coords, k=4)
+    neighbor_idxs = idxs[:, 1:4]  # 3 nearest neighbors
+    
+    # Ensure full grid
     full_index = pd.MultiIndex.from_product(
         [df["sensor_id"].unique(), df["timestamp"].unique()],
         names=["sensor_id", "timestamp"]
@@ -29,6 +37,7 @@ def preprocess_dataframe(df):
     del df_full['latitude_x']
     del df_full['longitude_x']
     print(df_full.isna().sum())
+    # Create neighbor mapping
     neighbor_mapping = {}
     mean_df=pd.DataFrame()
     for i, sensor_id in enumerate(unique_sensors["sensor_id"]):
@@ -54,20 +63,29 @@ def preprocess_dataframe(df):
     
     return df_full2
 
-
+# =========================
+# Step 2. Dataset Class
+# =========================
 class ImputationDataset(Dataset):
     def __init__(self, df):
+        """
+        df has [latitude, longitude, timestamp, neighbor_pm25, pm25, temp, rh]
+        Missing targets will be NaN (to impute later).
+        """
+        # Extract month and hour
         df = df.copy()
         df["month"] = df["timestamp"].dt.month
         df["hour"] = df["timestamp"].dt.hour
         
-
+        # Cyclic encoding
         df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
         df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
         df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
         df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
         
         self.df = df
+        
+        # Condition array
         self.cond = df[[
             "latitude", "longitude",
             "neighbor_pm25",
@@ -76,13 +94,16 @@ class ImputationDataset(Dataset):
         ]].values.astype("float32")
         self.target = df[["pm25","temp","rh"]].values.astype("float32")
 
+        # Store mask for missing values
         self.mask = ~np.isnan(self.target)
         
+        # Normalize target - only use non-NaN values for statistics
         valid_target = self.target[self.mask]
         self.mean = np.nanmean(self.target, axis=0, keepdims=True)
         self.std = np.nanstd(self.target, axis=0, keepdims=True) + 1e-6
         self.target_norm = (self.target - self.mean) / self.std
 
+        # Replace NaN with 0 in training
         self.target_norm = np.nan_to_num(self.target_norm)
 
     def __len__(self): 
@@ -96,6 +117,9 @@ class ImputationDataset(Dataset):
         )
 
 
+# =========================
+# Step 3. Generator and Discriminator
+# =========================
 class Generator(nn.Module):
     def __init__(self, cond_dim, target_dim, z_dim=16, hidden_dim=128):
         super().__init__()
@@ -129,6 +153,9 @@ class Discriminator(nn.Module):
         return self.net(x)
 
 
+# =========================
+# Step 4. Training Function
+# =========================
 def train_cgan(
     dataloader,
     cond_dim,
@@ -143,8 +170,9 @@ def train_cgan(
     G = Generator(cond_dim, target_dim, z_dim, hidden_dim).to(device)
     D = Discriminator(cond_dim, target_dim, hidden_dim).to(device)
 
+    # Use larger batch sizes for GPU
     if device == "cuda":
-        torch.backends.cudnn.benchmark = True  
+        torch.backends.cudnn.benchmark = True  # Enable cuDNN auto-tuner
     
     bce = nn.BCELoss()
     mse = nn.MSELoss()
@@ -168,7 +196,10 @@ def train_cgan(
             cond, real, mask = cond.to(device), real.to(device), mask.to(device)
             bs = cond.size(0)
 
-            z = torch.randn(bs, z_dim, device=device) 
+            # -------------------
+            # Train Discriminator
+            # -------------------
+            z = torch.randn(bs, z_dim, device=device)  # Create on GPU directly
             fake = G(cond, z).detach()
 
             real_out = D(cond, real)
@@ -182,12 +213,16 @@ def train_cgan(
             opt_D.step()
             epoch_D_loss.append(loss_D.item())
 
-            z = torch.randn(bs, z_dim, device=device) 
+            # -------------------
+            # Train Generator
+            # -------------------
+            z = torch.randn(bs, z_dim, device=device)  # Create on GPU
             fake = G(cond, z)
 
             fake_out = D(cond, fake)
             adv_loss = bce(fake_out, torch.ones_like(fake_out))
             
+            # Only compute reconstruction loss on non-missing values
             recon_loss = mse(fake[mask], real[mask]) if mask.any() else 0
 
             loss_G = adv_loss + lambda_recon * recon_loss
@@ -197,6 +232,9 @@ def train_cgan(
             opt_G.step()
             epoch_G_loss.append(loss_G.item())
 
+            # -------------------
+            # Metrics - Calculate less frequently to reduce CPU transfers
+            # -------------------
             if batch_idx % 10 == 0 and mask.any():  # Every 10 batches
                 mae_val = mean_absolute_error(real[mask].cpu().numpy(), fake[mask].detach().cpu().numpy())
                 mse_val = mean_squared_error(real[mask].cpu().numpy(), fake[mask].detach().cpu().numpy())
@@ -209,6 +247,7 @@ def train_cgan(
                 epoch_rmse.append(rmse_val)
                 epoch_mape.append(mape_val)
 
+            # Update progress bar less frequently
             if batch_idx % 5 == 0:
                 loop.set_postfix(
                     D_loss=np.mean(epoch_D_loss[-10:]),
@@ -216,7 +255,7 @@ def train_cgan(
                     MAE=np.mean(epoch_mae[-5:]) if epoch_mae else 0,
                 )
         current_mae = np.mean(epoch_mae) if epoch_mae else 0
-
+        # Save best model based on MAE (but continue training)
         if current_mae < best_mae:
             best_mae = current_mae
             patience_counter = 0
@@ -224,17 +263,19 @@ def train_cgan(
             torch.save(G.state_dict(), 'best_generator.pth')
         else:
             patience_counter += 1
+        # Monitor training progress
 
-        if epoch % 5 == 0: 
+        if epoch % 5 == 0:  # Check every 5 epochs
+            # Generate sample images to visually inspect quality
             with torch.no_grad():
                 sample_z = torch.randn(16, z_dim, device=device)
-                sample_cond = cond[:16] 
+                sample_cond = cond[:16]  # First 16 conditions
                 samples = G(sample_cond, sample_z).cpu().numpy()
-                
+                # Visualize or save samples to check quality
             
-            # checking for mode collapse
+            # Check for mode collapse (all samples look similar)
             sample_std = samples.std(axis=0).mean()
-            if sample_std < 0.1:
+            if sample_std < 0.1:  # Very low diversity
                 print("Warning: Possible mode collapse detected!")
             
 
@@ -256,6 +297,9 @@ def train_cgan(
     return G, D, history
 
 
+# =========================
+# Step 5. Imputation Function
+# =========================
 def impute_missing(G, dataset, device="cpu"):
     df = dataset.df.copy()
     cond = torch.tensor(dataset.cond, dtype=torch.float32).to(device)
@@ -273,11 +317,21 @@ def impute_missing(G, dataset, device="cpu"):
     
     return df
 
-def save_imputation_model(G, dataset, sensor_mapping, neighbor_mapping, filepath="imputation_model"):
+
+# =========================
+# Step 6. Save Model and Metadata
+# =========================
+def save_imputation_model(G, dataset, filepath="imputation_model"):
+    """
+    Save the trained model and all necessary metadata for future imputation
+    """
+    # Create directory if it doesn't exist
     os.makedirs(filepath, exist_ok=True)
     
+    # Save the generator model
     torch.save(G.state_dict(), os.path.join(filepath, "generator.pth"))
     
+    # Save dataset normalization parameters
     norm_params = {
         'mean': dataset.mean.tolist(),
         'std': dataset.std.tolist(),
@@ -288,12 +342,7 @@ def save_imputation_model(G, dataset, sensor_mapping, neighbor_mapping, filepath
     with open(os.path.join(filepath, "norm_params.json"), 'w') as f:
         json.dump(norm_params, f)
     
-    with open(os.path.join(filepath, "sensor_mapping.pkl"), 'wb') as f:
-        pickle.dump(sensor_mapping, f)
-    
-    with open(os.path.join(filepath, "neighbor_mapping.pkl"), 'wb') as f:
-        pickle.dump(neighbor_mapping, f)
-
+    # Save model architecture parameters
     model_config = {
         'cond_dim': dataset.cond.shape[1],
         'target_dim': dataset.target.shape[1],
@@ -307,34 +356,10 @@ def save_imputation_model(G, dataset, sensor_mapping, neighbor_mapping, filepath
     print(f"Model saved successfully in {filepath}/")
 
 
-def load_imputation_model(filepath="imputation_model", device="cpu"):
-    with open(os.path.join(filepath, "model_config.json"), 'r') as f:
-        model_config = json.load(f)
 
-    G = Generator(model_config['cond_dim'], 
-                 model_config['target_dim'], 
-                 model_config['z_dim'], 
-                 model_config['hidden_dim']).to(device)
-    
-
-    G.load_state_dict(torch.load(os.path.join(filepath, "generator.pth"), 
-                                map_location=device))
-    G.eval()
-    
-
-    with open(os.path.join(filepath, "norm_params.json"), 'r') as f:
-        norm_params = json.load(f)
-    
-
-    with open(os.path.join(filepath, "sensor_mapping.pkl"), 'rb') as f:
-        sensor_mapping = pickle.load(f)
-    
-    with open(os.path.join(filepath, "neighbor_mapping.pkl"), 'rb') as f:
-        neighbor_mapping = pickle.load(f)
-    
-    return G, norm_params, sensor_mapping, neighbor_mapping
-
-
+# =========================
+# Main Execution
+# =========================
 if __name__ == "__main__":
     # Load and preprocess data
     df = pd.read_parquet("../main_data_cleaned_aryan2.parquet")
@@ -357,6 +382,7 @@ if __name__ == "__main__":
 
     print(f"Condition dimension: {cond_dim}, Output dimension: {out_dim}")
 
+    # Train the model
     G, D, history = train_cgan(
         dataloader=loader, 
         cond_dim=cond_dim,
@@ -369,9 +395,9 @@ if __name__ == "__main__":
         lambda_recon=10.0
     )
 
+    # Impute missing values
     df_imputed = impute_missing(G, dataset, device=device)
-    
-    save_imputation_model(G, dataset, sensor_mapping, neighbor_mapping, "cgan")
     df_imputed.to_parquet('df_imputed_cgan.parquet')
+    save_imputation_model(G, dataset)
     print("Imputation done. Final shape:", df_imputed.shape)
     print("Missing values after imputation:", df_imputed[["pm25", "temp", "rh"]].isna().sum())
